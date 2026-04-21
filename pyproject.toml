@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cheongyak-rag-mcp"
+version = "0.2.0"
+description = "Korean housing subscription (청약) RAG MCP server with real-time data from 청약홈"
+requires-python = ">=3.10"
+dependencies = [
+    "mcp[cli]>=1.0.0",
+    "chromadb>=0.4.22",
+    "sentence-transformers>=2.2.2",
+    "PyMuPDF>=1.23.0",
+    "olefile>=0.47",
+    "openai>=1.0.0",
+    "python-dotenv>=1.0.0",
+    "httpx>=0.25.0",
+    "beautifulsoup4>=4.12.0",
+    "lxml>=4.9.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-asyncio>=0.21",
+]
+
+[project.scripts]
+cheongyak-mcp = "rag_mcp.server:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
