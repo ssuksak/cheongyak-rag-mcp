@@ -15,6 +15,7 @@ from .parser import parse_document, PARSERS
 from .chunker import chunk_document
 from .rag import ask_question
 from .scraper import CheongyakScraper
+from .setup import is_first_run
 from .vectorstore import VectorStore
 
 logging.basicConfig(
@@ -537,11 +538,37 @@ def get_stats() -> str:
 
 
 def main():
+    import sys
+
+    if len(sys.argv) > 1:
+        cmd = sys.argv[1]
+        if cmd == "config":
+            from .setup import run_setup
+
+            run_setup()
+            return
+        elif cmd in ("--help", "-h"):
+            print("cheongyak-mcp — 한국 주택청약 RAG MCP 서버")
+            print()
+            print("Usage:")
+            print("  cheongyak-mcp          MCP 서버 실행")
+            print("  cheongyak-mcp config   설정 변경")
+            print("  cheongyak-mcp --help   도움말")
+            return
+
+    if is_first_run():
+        from .setup import run_setup
+
+        run_setup()
+
     config = get_config()
     logger.info("Starting 청약 RAG MCP Server")
     logger.info(f"  Documents dir: {config.documents_dir}")
     logger.info(f"  ChromaDB dir:  {config.chroma_persist_dir}")
     logger.info(f"  Embedding:     {config.embedding_model}")
+    logger.info(
+        f"  API mode:      {'공식 API + 스크래핑' if config.data_go_kr_api_key else '청약홈 스크래핑'}"
+    )
     mcp.run()
 
 

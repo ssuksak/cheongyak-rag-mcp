@@ -6,7 +6,23 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-load_dotenv()
+from .setup import get_env_file, is_first_run
+
+_global_env_loaded = False
+
+
+def _load_global_env():
+    global _global_env_loaded
+    if _global_env_loaded:
+        return
+    env_file = get_env_file()
+    if os.path.exists(env_file):
+        load_dotenv(env_file)
+    load_dotenv()
+    _global_env_loaded = True
+
+
+_load_global_env()
 
 
 @dataclass
