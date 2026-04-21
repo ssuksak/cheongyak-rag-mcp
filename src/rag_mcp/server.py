@@ -402,19 +402,119 @@ def ask_about_documents(query: str, top_k: int = 5) -> str:
     return json.dumps(result, ensure_ascii=False, indent=2)
 
 
-# ─── 공공데이터포털 API Tools ──────────────────────────────────────
+# ─── 공공데이터포털 공식 API Tools ──────────────────────────────────
+
+
+_data_api: DataGoKrClient | None = None
+
+
+def _get_data_api() -> DataGoKrClient:
+    global _data_api
+    if _data_api is None:
+        _data_api = DataGoKrClient()
+    return _data_api
 
 
 @mcp.tool()
-def fetch_apt_list_api(region_code: str | None = None, page: int = 1) -> str:
+def list_available_apis() -> str:
+    """사용 가능한 공공데이터포털 청약 API 목록을 반환합니다."""
+    client = _get_data_api()
+    services = client.list_services()
+    configured = client.is_configured
+    return json.dumps(
+        {
+            "api_key_configured": configured,
+            "setup_guide": "https://www.data.go.kr 에서 회원가입 후 각 API '활용신청' → 인증키 발급"
+            if not configured
+            else None,
+            "services": services,
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
+
+
+@mcp.tool()
+def fetch_apt_subscription_api(
+    region_code: str | None = None, page: int = 1, num_of_rows: int = 50
+) -> str:
     """공공데이터포털 API로 APT 분양정보를 조회합니다. (DATA_GO_KR_API_KEY 필요)
 
     Args:
-        region_code: 법정동코드 (예: '11110' - 서울 종로구)
+        region_code: 법정동코드 앞 5자리 (예: '11110' 서울종로구, '11680' 송파구)
         page: 페이지 번호
+        num_of_rows: 한 페이지 결과 수
     """
-    client = DataGoKrClient()
-    result = client.fetch_apt_list(region_code=region_code, page=page)
+    client = _get_data_api()
+    params = {"pageNo": str(page), "numOfRows": str(num_of_rows)}
+    if region_code:
+        params["LAWD_CD"] = region_code
+    result = client.fetch_apt_subscriptions(**params)
+    return json.dumps(result, ensure_ascii=False, indent=2)
+
+
+@mcp.tool()
+def fetch_competition_rate_api(page: int = 1, num_of_rows: int = 50) -> str:
+    """공공데이터포털 API로 청약 경쟁률을 조회합니다. (DATA_GO_KR_API_KEY 필요)
+
+    Args:
+        page: 페이지 번호
+        num_of_rows: 한 페이지 결과 수
+    """
+    client = _get_data_api()
+    result = client.fetch_competition_rate(pageNo=str(page), numOfRows=str(num_of_rows))
+    return json.dumps(result, ensure_ascii=False, indent=2)
+
+
+@mcp.tool()
+def fetch_housing_price_api(page: int = 1, num_of_rows: int = 50) -> str:
+    """공공데이터포털 API로 주택 분양가 정보를 조회합니다. (DATA_GO_KR_API_KEY 필요)
+
+    Args:
+        page: 페이지 번호
+        num_of_rows: 한 페이지 결과 수
+    """
+    client = _get_data_api()
+    result = client.fetch_housing_price(pageNo=str(page), numOfRows=str(num_of_rows))
+    return json.dumps(result, ensure_ascii=False, indent=2)
+
+
+@mcp.tool()
+def fetch_lh_supply_api(page: int = 1, num_of_rows: int = 50) -> str:
+    """공공데이터포털 API로 LH 공급예정 주택정보를 조회합니다. (DATA_GO_KR_API_KEY 필요)
+
+    Args:
+        page: 페이지 번호
+        num_of_rows: 한 페이지 결과 수
+    """
+    client = _get_data_api()
+    result = client.fetch_lh_supply(pageNo=str(page), numOfRows=str(num_of_rows))
+    return json.dumps(result, ensure_ascii=False, indent=2)
+
+
+@mcp.tool()
+def fetch_presale_transfer_api(page: int = 1, num_of_rows: int = 50) -> str:
+    """공공데이터포털 API로 분양권 전매 정보를 조회합니다. (DATA_GO_KR_API_KEY 필요)
+
+    Args:
+        page: 페이지 번호
+        num_of_rows: 한 페이지 결과 수
+    """
+    client = _get_data_api()
+    result = client.fetch_presale_transfer(pageNo=str(page), numOfRows=str(num_of_rows))
+    return json.dumps(result, ensure_ascii=False, indent=2)
+
+
+@mcp.tool()
+def fetch_price_cap_api(page: int = 1, num_of_rows: int = 50) -> str:
+    """공공데이터포털 API로 분양가상한제 대상 APT를 조회합니다. (DATA_GO_KR_API_KEY 필요)
+
+    Args:
+        page: 페이지 번호
+        num_of_rows: 한 페이지 결과 수
+    """
+    client = _get_data_api()
+    result = client.fetch_price_cap(pageNo=str(page), numOfRows=str(num_of_rows))
     return json.dumps(result, ensure_ascii=False, indent=2)
 
 
