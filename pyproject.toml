@@ -6,7 +6,10 @@ build-backend = "setuptools.build_meta"
 name = "cheongyak-rag-mcp"
 version = "0.2.0"
 description = "Korean housing subscription (청약) RAG MCP server with real-time data from 청약홈"
+readme = "README.md"
 requires-python = ">=3.10"
+license = {text = "MIT"}
+
 dependencies = [
     "mcp[cli]>=1.0.0",
     "chromadb>=0.4.22",
