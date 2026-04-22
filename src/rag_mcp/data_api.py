@@ -107,10 +107,11 @@ class DataGoKrClient:
                 }
 
             return data
-        except httpx.HTTPStatusError as e:
-            return {"error": f"HTTP {e.response.status_code}"}
+        except httpx.HTTPStatusError:
+            return {"error": f"HTTP 요청 실패"}
         except Exception as e:
-            return {"error": str(e)}
+            logger.exception(f"API request failed: {service_key}")
+            return {"error": "API 요청에 실패했습니다."}
 
     def list_services(self) -> list[dict]:
         return [

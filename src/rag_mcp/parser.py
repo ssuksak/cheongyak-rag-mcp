@@ -20,7 +20,14 @@ class ParsedDocument:
     page_count: int
 
 
+MAX_FILE_SIZE = 50 * 1024 * 1024
+
+
 def parse_pdf(filepath: str) -> ParsedDocument:
+    file_size = Path(filepath).stat().st_size
+    if file_size > MAX_FILE_SIZE:
+        raise ValueError(f"File too large: {file_size} bytes (max {MAX_FILE_SIZE})")
+
     doc = fitz.open(filepath)
     pages = []
     full_text_parts = []
@@ -111,46 +118,14 @@ def parse_hwp(filepath: str) -> ParsedDocument:
             page_count=1,
         )
     except Exception as e:
-        raise RuntimeError(
-            f"HWP parsing failed: {e}. Install olefile: pip install olefile"
-        )
-
-        ole = olefile.OleFileIO(filepath)
-        stream = ole.openstream("PrvText")
-        text = stream.read().decode("utf-16le", errors="ignore").strip()
-
-        if not text:
-            if ole.exists("BodyText"):
-                parts = []
-                for entry in ole.listdir():
-                    if entry[0].startswith("BodyText"):
-                        try:
-                            s = ole.openstream(entry)
-                            parts.append(
-                                s.read().decode("utf-16le", errors="ignore").strip()
-                            )
-                        except Exception:
-                            pass
-                text = "\n".join(p for p in parts if p)
-
-        ole.close()
-
-        return ParsedDocument(
-            filename=Path(filepath).name,
-            filepath=filepath,
-            file_type="hwp",
-            pages=[{"page_number": 1, "text": text, "char_count": len(text)}],
-            full_text=text,
-            metadata={"title": Path(filepath).stem, "page_count": 1},
-            page_count=1,
-        )
-    except ImportError:
-        raise RuntimeError(
-            "HWP parsing requires pyhwp or olefile. Install with: pip install pyhwp olefile"
-        )
+        raise RuntimeError("HWP parsing failed. Install olefile: pip install olefile")
 
 
 def parse_txt(filepath: str) -> ParsedDocument:
+    file_size = Path(filepath).stat().st_size
+    if file_size > MAX_FILE_SIZE:
+        raise ValueError(f"File too large: {file_size} bytes (max {MAX_FILE_SIZE})")
+
     for encoding in ["utf-8", "cp949", "euc-kr"]:
         try:
             with open(filepath, "r", encoding=encoding) as f:

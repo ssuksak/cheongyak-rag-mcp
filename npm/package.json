@@ -1,6 +1,6 @@
 {
   "name": "cheongyak-rag-mcp",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "한국 주택청약 RAG MCP 서버 — 청약홈 실시간 데이터 + PDF/HWP 공고문 Q&A",
   "bin": {
     "cheongyak-mcp": "bin/cheongyak-mcp.js"

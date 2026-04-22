@@ -9,8 +9,11 @@ from pathlib import Path
 
 import httpx
 from bs4 import BeautifulSoup
+from urllib.parse import urlparse
 
 from .config import get_config
+
+ALLOWED_DOMAINS = {"static.applyhome.co.kr", "www.applyhome.co.kr", "applyhome.co.kr"}
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +68,9 @@ class CheongyakScraper:
         self._cache_time: dict = {}
 
     def _get_client(self) -> httpx.Client:
-        return httpx.Client(headers=HEADERS, timeout=20, follow_redirects=True)
+        return httpx.Client(
+            headers=HEADERS, timeout=20, follow_redirects=True, max_redirects=3
+        )
 
     def _is_cache_valid(self, key: str) -> bool:
         if key not in self._cache_time:
@@ -316,15 +321,37 @@ class CheongyakScraper:
                 if "atchmnfl" not in href.lower():
                     continue
 
+                if not href.startswith(("/", "https://", "http://")):
+                    continue
+
                 url = (
                     href
                     if href.startswith("http")
                     else f"https://static.applyhome.co.kr{href}"
                 )
+
+                parsed_url = urlparse(url)
+                if parsed_url.scheme not in ("http", "https"):
+                    logger.warning(f"Skipping non-HTTP URL: {url}")
+                    continue
+                if parsed_url.hostname not in ALLOWED_DOMAINS:
+                    logger.warning(f"Skipping external domain: {url}")
+                    continue
+
                 label = a_tag.get_text(strip=True)
                 safe_name = re.sub(r"[^\w가-힣]", "_", name)[:30]
+                safe_label = re.sub(r"[^\w가-힣.]", "_", label)[:50]
 
                 try:
+                    save_dir_resolved = Path(save_dir).resolve()
+                    save_dir_resolved.mkdir(parents=True, exist_ok=True)
+                    filepath = (
+                        save_dir_resolved / f"{safe_name}_{safe_label}{ext}"
+                    ).resolve()
+                    if not str(filepath).startswith(str(save_dir_resolved)):
+                        logger.error(f"Path escape detected: {filepath}")
+                        continue
+
                     resp = client.get(url, follow_redirects=True)
                     if resp.status_code == 200:
                         content_type = resp.headers.get("content-type", "")
@@ -334,7 +361,6 @@ class CheongyakScraper:
                         elif "html" in content_type:
                             ext = ".html"
 
-                        filepath = Path(save_dir) / f"{safe_name}_{label}{ext}"
                         filepath.write_bytes(resp.content)
                         saved_files.append(str(filepath))
                         logger.info(f"Downloaded: {filepath}")

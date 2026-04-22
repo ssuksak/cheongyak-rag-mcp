@@ -2,6 +2,7 @@
 
 import json
 import logging
+import stat
 import sys
 from dataclasses import asdict
 from pathlib import Path
@@ -17,6 +18,14 @@ from .rag import ask_question
 from .scraper import CheongyakScraper
 from .setup import is_first_run
 from .vectorstore import VectorStore
+
+MAX_FILE_SIZE = 50 * 1024 * 1024
+MAX_FILES = 500
+SAFE_ALLOWED_DOMAINS = {
+    "static.applyhome.co.kr",
+    "www.applyhome.co.kr",
+    "applyhome.co.kr",
+}
 
 logging.basicConfig(
     level=logging.INFO,
@@ -74,6 +83,10 @@ def fetch_current_subscriptions(region: str | None = None, page: int = 1) -> str
         region: 지역 필터 (예: '서울', '경기', '부산'). 미지정 시 전국.
         page: 페이지 번호 (기본 1)
     """
+    page = max(1, min(page, 1000))
+    if region and len(region) > 50:
+        return json.dumps({"error": "지역명이 너무 깁니다."}, ensure_ascii=False)
+
     scraper = _get_scraper()
     items = scraper.fetch_current_subscriptions(region=region, page=page)
 
@@ -128,6 +141,11 @@ def search_subscriptions(keyword: str) -> str:
     Args:
         keyword: 검색 키워드 (예: '자이', '서울', '롯데')
     """
+    if not keyword or not keyword.strip() or len(keyword) > 200:
+        return json.dumps(
+            {"error": "키워드를 1~200자 사이로 입력하세요."}, ensure_ascii=False
+        )
+
     scraper = _get_scraper()
     items = scraper.search_subscriptions(keyword)
 
@@ -174,6 +192,9 @@ def download_and_ingest_notice(name: str) -> str:
     Args:
         name: 주택명 (예: '공덕역자이르네')
     """
+    if not name or not name.strip() or len(name) > 200:
+        return json.dumps({"error": "주택명을 입력하세요."}, ensure_ascii=False)
+
     scraper = _get_scraper()
     config = get_config()
     saved_files = scraper.download_attachment(name, save_dir=config.documents_dir)
@@ -189,17 +210,28 @@ def download_and_ingest_notice(name: str) -> str:
 
     for filepath in saved_files:
         try:
+            file_size = Path(filepath).stat().st_size
+            if file_size > MAX_FILE_SIZE:
+                results["failed"].append(
+                    {"file": Path(filepath).name, "error": "파일이 너무 큽니다"}
+                )
+                continue
             parsed = parse_document(filepath)
             chunks = chunk_document(parsed)
             if chunks:
                 added = vs.add_chunks(chunks)
-                results["ingested"].append({"file": filepath, "chunks": added})
+                results["ingested"].append(
+                    {"file": Path(filepath).name, "chunks": added}
+                )
             else:
                 results["downloaded"].append(
-                    {"file": filepath, "note": "텍스트 추출 불가"}
+                    {"file": Path(filepath).name, "note": "텍스트 추출 불가"}
                 )
         except Exception as e:
-            results["failed"].append({"file": filepath, "error": str(e)})
+            logger.exception(f"Failed to process {filepath}")
+            results["failed"].append(
+                {"file": Path(filepath).name, "error": "처리 실패"}
+            )
 
     return json.dumps(results, ensure_ascii=False, indent=2)
 
@@ -275,6 +307,7 @@ def search_cheongyak_rag(query: str, top_k: int = 5) -> str:
         query: 검색 질의 (예: '서울 분양주택', '신혼부부 특별공급')
         top_k: 반환할 결과 수
     """
+    top_k = max(1, min(top_k, 50))
     vs = _get_vector_store()
     results = vs.search(query, top_k=top_k)
 
@@ -320,21 +353,34 @@ def ingest_documents(directory: str | None = None) -> str:
     """
     config = get_config()
     target_dir = directory or config.documents_dir
-    dir_path = Path(target_dir)
+    dir_path = Path(target_dir).resolve()
 
     if not dir_path.exists():
         return json.dumps(
-            {"error": f"디렉터리가 존재하지 않습니다: {target_dir}"}, ensure_ascii=False
+            {"error": "디렉터리가 존재하지 않습니다."}, ensure_ascii=False
         )
+
+    if directory:
+        allowed_base = Path(config.documents_dir).resolve()
+        try:
+            dir_path.relative_to(allowed_base)
+        except ValueError:
+            return json.dumps(
+                {"error": "허용되지 않은 디렉터리입니다."}, ensure_ascii=False
+            )
 
     files = []
     for ext in PARSERS:
-        files.extend(dir_path.rglob(f"*{ext}"))
+        for f in dir_path.rglob(f"*{ext}"):
+            if f.is_symlink():
+                continue
+            if f.stat().st_size <= MAX_FILE_SIZE:
+                files.append(f)
+            if len(files) >= MAX_FILES:
+                break
 
     if not files:
-        return json.dumps(
-            {"error": f"지원되는 문서가 없습니다: {target_dir}"}, ensure_ascii=False
-        )
+        return json.dumps({"error": "지원되는 문서가 없습니다."}, ensure_ascii=False)
 
     vs = _get_vector_store()
     results = {"total_files": len(files), "processed": 0, "failed": 0, "details": []}
@@ -354,9 +400,10 @@ def ingest_documents(directory: str | None = None) -> str:
                     {"filename": parsed.filename, "status": "skipped"}
                 )
         except Exception as e:
+            logger.exception(f"Failed to process {filepath}")
             results["failed"] += 1
             results["details"].append(
-                {"filename": filepath.name, "status": "error", "error": str(e)}
+                {"filename": filepath.name, "status": "error", "error": "처리 실패"}
             )
 
     return json.dumps(results, ensure_ascii=False, indent=2)
@@ -369,9 +416,22 @@ def ingest_file(filepath: str) -> str:
     Args:
         filepath: 파일 경로
     """
-    file_path = Path(filepath)
+    config = get_config()
+    file_path = Path(filepath).resolve()
     if not file_path.exists():
-        return json.dumps({"error": f"파일이 없습니다: {filepath}"}, ensure_ascii=False)
+        return json.dumps({"error": "파일이 없습니다."}, ensure_ascii=False)
+
+    if file_path.stat().st_size > MAX_FILE_SIZE:
+        return json.dumps({"error": "파일이 너무 큽니다."}, ensure_ascii=False)
+
+    allowed_dirs = [Path(config.documents_dir).resolve()]
+    try:
+        if not any(str(file_path).startswith(str(d)) for d in allowed_dirs):
+            return json.dumps(
+                {"error": "허용되지 않은 경로입니다."}, ensure_ascii=False
+            )
+    except Exception:
+        return json.dumps({"error": "잘못된 경로입니다."}, ensure_ascii=False)
 
     try:
         parsed = parse_document(str(file_path))
@@ -387,7 +447,8 @@ def ingest_file(filepath: str) -> str:
             {"filename": parsed.filename, "status": "skipped"}, ensure_ascii=False
         )
     except Exception as e:
-        return json.dumps({"error": str(e)}, ensure_ascii=False)
+        logger.exception(f"Failed to process {filepath}")
+        return json.dumps({"error": "파일 처리에 실패했습니다."}, ensure_ascii=False)
 
 
 @mcp.tool()
@@ -398,6 +459,7 @@ def ask_about_documents(query: str, top_k: int = 5) -> str:
         query: 질문 내용
         top_k: 검색할 문서 수
     """
+    top_k = max(1, min(top_k, 50))
     vs = _get_vector_store()
     result = ask_question(query, vs, top_k=top_k)
     return json.dumps(result, ensure_ascii=False, indent=2)
@@ -446,10 +508,12 @@ def fetch_apt_subscription_api(
         page: 페이지 번호
         num_of_rows: 한 페이지 결과 수
     """
+    page = max(1, min(page, 1000))
+    num_of_rows = max(1, min(num_of_rows, 200))
     client = _get_data_api()
     params = {"pageNo": str(page), "numOfRows": str(num_of_rows)}
     if region_code:
-        params["LAWD_CD"] = region_code
+        params["LAWD_CD"] = region_code[:10]
     result = client.fetch_apt_subscriptions(**params)
     return json.dumps(result, ensure_ascii=False, indent=2)
 
@@ -462,6 +526,8 @@ def fetch_competition_rate_api(page: int = 1, num_of_rows: int = 50) -> str:
         page: 페이지 번호
         num_of_rows: 한 페이지 결과 수
     """
+    page = max(1, min(page, 1000))
+    num_of_rows = max(1, min(num_of_rows, 200))
     client = _get_data_api()
     result = client.fetch_competition_rate(pageNo=str(page), numOfRows=str(num_of_rows))
     return json.dumps(result, ensure_ascii=False, indent=2)
@@ -475,6 +541,8 @@ def fetch_housing_price_api(page: int = 1, num_of_rows: int = 50) -> str:
         page: 페이지 번호
         num_of_rows: 한 페이지 결과 수
     """
+    page = max(1, min(page, 1000))
+    num_of_rows = max(1, min(num_of_rows, 200))
     client = _get_data_api()
     result = client.fetch_housing_price(pageNo=str(page), numOfRows=str(num_of_rows))
     return json.dumps(result, ensure_ascii=False, indent=2)
@@ -488,6 +556,8 @@ def fetch_lh_supply_api(page: int = 1, num_of_rows: int = 50) -> str:
         page: 페이지 번호
         num_of_rows: 한 페이지 결과 수
     """
+    page = max(1, min(page, 1000))
+    num_of_rows = max(1, min(num_of_rows, 200))
     client = _get_data_api()
     result = client.fetch_lh_supply(pageNo=str(page), numOfRows=str(num_of_rows))
     return json.dumps(result, ensure_ascii=False, indent=2)
@@ -501,6 +571,8 @@ def fetch_presale_transfer_api(page: int = 1, num_of_rows: int = 50) -> str:
         page: 페이지 번호
         num_of_rows: 한 페이지 결과 수
     """
+    page = max(1, min(page, 1000))
+    num_of_rows = max(1, min(num_of_rows, 200))
     client = _get_data_api()
     result = client.fetch_presale_transfer(pageNo=str(page), numOfRows=str(num_of_rows))
     return json.dumps(result, ensure_ascii=False, indent=2)
@@ -514,6 +586,8 @@ def fetch_price_cap_api(page: int = 1, num_of_rows: int = 50) -> str:
         page: 페이지 번호
         num_of_rows: 한 페이지 결과 수
     """
+    page = max(1, min(page, 1000))
+    num_of_rows = max(1, min(num_of_rows, 200))
     client = _get_data_api()
     result = client.fetch_price_cap(pageNo=str(page), numOfRows=str(num_of_rows))
     return json.dumps(result, ensure_ascii=False, indent=2)
